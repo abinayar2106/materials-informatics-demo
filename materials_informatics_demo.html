@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Materials Informatics — Phase Transition Demo</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+h1 { font-size: 20px; font-weight: 500; color: #e2e8f0; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: #64748b; margin-bottom: 1.5rem; }
+.pipeline-bar { display: flex; align-items: center; gap: 0; margin-bottom: 1.5rem; overflow-x: auto; flex-wrap: wrap; gap: 4px; }
+.stage { display: flex; align-items: center; gap: 4px; }
+.stage-box { padding: 6px 14px; font-size: 12px; font-weight: 500; border: 1px solid #2d3748; background: #1a202c; color: #718096; border-radius: 4px; white-space: nowrap; }
+.stage-box.active { background: #042C53; color: #90cdf4; border-color: #185FA5; }
+.stage-box.done { background: #04342C; color: #9AE6B4; border-color: #0F6E56; }
+.arrow { font-size: 11px; color: #4a5568; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+.ctrl-card { background: #1a202c; border: 1px solid #2d3748; border-radius: 8px; padding: 12px; }
+.ctrl-label { font-size: 12px; color: #718096; margin-bottom: 8px; display: flex; justify-content: space-between; }
+.ctrl-val { font-weight: 500; color: #e2e8f0; }
+input[type=range] { width: 100%; accent-color: #185FA5; }
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 1.5rem; }
+@media(max-width:600px){ .metrics { grid-template-columns: repeat(2,1fr); } }
+.metric { background: #1a202c; border-radius: 8px; padding: 12px; }
+.metric-label { font-size: 11px; color: #718096; margin-bottom: 4px; }
+.metric-val { font-size: 22px; font-weight: 500; color: #e2e8f0; }
+.metric-sub { font-size: 11px; color: #4a5568; margin-top: 2px; }
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.5rem; }
+@media(max-width:700px){ .charts-row { grid-template-columns: 1fr; } }
+.chart-card { background: #1a202c; border: 1px solid #2d3748; border-radius: 12px; padding: 1rem; }
+.chart-title { font-size: 13px; font-weight: 500; color: #718096; margin-bottom: 12px; }
+.canvas-wrap { position: relative; width: 100%; height: 220px; }
+.log-card { background: #1a202c; border: 1px solid #2d3748; border-radius: 12px; padding: 1rem; }
+.log-title { font-size: 13px; font-weight: 500; color: #718096; margin-bottom: 10px; }
+.log-body { font-family: 'Courier New', monospace; font-size: 11.5px; color: #718096; line-height: 1.8; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.log-ok { color: #48bb78; }
+.log-info { color: #63b3ed; }
+.run-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 20px; font-size: 13px; font-weight: 500; background: #185FA5; color: #e2e8f0; border: none; border-radius: 8px; cursor: pointer; margin-bottom: 1.5rem; }
+.run-btn:hover { background: #2b6cb0; }
+</style>
+</head>
+<body>
+
+<h1>Materials Informatics — Phase Transition Detector</h1>
+<p class="subtitle">Synthetic Ni-Ti-Hf EBSD data · Unsupervised ML clustering · Automated phase labelling</p>
+
+<div class="pipeline-bar" id="pipelineBar">
+  <div class="stage"><div class="stage-box" id="s0">1 · Data ingestion</div><span class="arrow"> → </span></div>
+  <div class="stage"><div class="stage-box" id="s1">2 · ETL & normalise</div><span class="arrow"> → </span></div>
+  <div class="stage"><div class="stage-box" id="s2">3 · Feature extract</div><span class="arrow"> → </span></div>
+  <div class="stage"><div class="stage-box" id="s3">4 · K-means cluster</div><span class="arrow"> → </span></div>
+  <div class="stage"><div class="stage-box" id="s4">5 · Phase label</div><span class="arrow"> → </span></div>
+  <div class="stage"><div class="stage-box" id="s5">6 · Report</div></div>
+</div>
+
+<div class="controls">
+  <div class="ctrl-card">
+    <div class="ctrl-label">Grain count (synthetic)<span class="ctrl-val" id="grainVal">800</span></div>
+    <input type="range" min="200" max="2000" step="100" value="800" id="grainSlider">
+  </div>
+  <div class="ctrl-card">
+    <div class="ctrl-label">Hf content (at%)<span class="ctrl-val" id="hfVal">12</span></div>
+    <input type="range" min="0" max="30" step="1" value="12" id="hfSlider">
+  </div>
+  <div class="ctrl-card">
+    <div class="ctrl-label">K clusters<span class="ctrl-val" id="kVal">3</span></div>
+    <input type="range" min="2" max="6" step="1" value="3" id="kSlider">
+  </div>
+</div>
+
+<button class="run-btn" onclick="runPipeline()">▶ Run pipeline</button>
+
+<div class="metrics" id="metricsRow">
+  <div class="metric"><div class="metric-label">Grains processed</div><div class="metric-val" id="m0">—</div><div class="metric-sub">synthetic EBSD scan</div></div>
+  <div class="metric"><div class="metric-label">Phases detected</div><div class="metric-val" id="m1">—</div><div class="metric-sub">k-means clusters</div></div>
+  <div class="metric"><div class="metric-label">Silhouette score</div><div class="metric-val" id="m2">—</div><div class="metric-sub">cluster quality</div></div>
+  <div class="metric"><div class="metric-label">B19′ fraction</div><div class="metric-val" id="m3">—</div><div class="metric-sub">martensite volume %</div></div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-card">
+    <div class="chart-title">Orientation distribution — Euler φ₁ vs Φ</div>
+    <div class="canvas-wrap"><canvas id="scatterChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Phase volume fractions</div>
+    <div class="canvas-wrap"><canvas id="barChart"></canvas></div>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-card">
+    <div class="chart-title">Misorientation angle distribution</div>
+    <div class="canvas-wrap"><canvas id="histChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Texture index vs temperature (simulated)</div>
+    <div class="canvas-wrap"><canvas id="lineChart"></canvas></div>
+  </div>
+</div>
+
+<div class="log-card">
+  <div class="log-title">Pipeline execution log</div>
+  <div class="log-body" id="logBody">Run the pipeline to see execution output...</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const PHASE_COLORS=['#2b6cb0','#276749','#9c4221','#6b46c1','#b7791f','#9b2c2c'];
+const PHASE_NAMES_MAP={2:['B2 (austenite)','B19′ (martensite)'],3:['B2 (austenite)','B19′ (martensite)','R-phase'],4:['B2','B19′','R-phase','B19'],5:['B2','B19′','R-phase','B19','NiTi₂'],6:['B2','B19′','R-phase','B19','NiTi₂','Ti₂Ni']};
+let charts={};
+
+function rng(seed){let s=seed;return()=>{s=(s*1664525+1013904223)&0xffffffff;return(s>>>0)/4294967296};}
+
+function genData(n,hf,k){
+  const r=rng(42+hf);
+  const centers=Array.from({length:k},(_,i)=>({phi1:(i/k)*360+r()*40,phi:(i/k)*90+r()*20}));
+  const grains=[];
+  for(let i=0;i<n;i++){
+    const cl=Math.floor(r()*k);
+    const c=centers[cl];
+    grains.push({phi1:(c.phi1+r()*35-17+360)%360,phi:Math.max(0,Math.min(90,c.phi+r()*25-12)),cluster:cl});
+  }
+  return {grains,centers};
+}
+
+function silhouette(grains,k){
+  if(k<2)return 1;
+  let total=0;
+  const sample=grains.slice(0,Math.min(200,grains.length));
+  sample.forEach(g=>{
+    const intra=sample.filter(o=>o.cluster===g.cluster&&o!==g).map(o=>Math.hypot(g.phi1-o.phi1,g.phi-o.phi));
+    const a=intra.length?intra.reduce((s,v)=>s+v,0)/intra.length:0;
+    let minB=Infinity;
+    for(let c=0;c<k;c++){if(c===g.cluster)continue;const inter=sample.filter(o=>o.cluster===c).map(o=>Math.hypot(g.phi1-o.phi1,g.phi-o.phi));if(inter.length){const b=inter.reduce((s,v)=>s+v,0)/inter.length;if(b<minB)minB=b;}}
+    total+=(minB===Infinity?0:(minB-a)/Math.max(a,minB));
+  });
+  return +(total/sample.length).toFixed(2);
+}
+
+function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
+
+function appendLog(msg,cls){
+  const lb=document.getElementById('logBody');
+  if(lb.textContent==='Run the pipeline to see execution output...')lb.textContent='';
+  const span=document.createElement('span');
+  span.className=cls||'';
+  span.style.display='block';
+  span.textContent=msg;
+  lb.appendChild(span);
+  lb.scrollTop=lb.scrollHeight;
+}
+
+async function runPipeline(){
+  const n=+document.getElementById('grainSlider').value;
+  const hf=+document.getElementById('hfSlider').value;
+  const k=+document.getElementById('kSlider').value;
+  const phaseNames=PHASE_NAMES_MAP[k]||PHASE_NAMES_MAP[3];
+  const stages=['s0','s1','s2','s3','s4','s5'];
+
+  function setStage(i){stages.forEach((s,j)=>{document.getElementById(s).className='stage-box'+(j<i?' done':j===i?' active':'');});}
+
+  document.getElementById('logBody').textContent='';
+  ['m0','m1','m2','m3'].forEach(id=>document.getElementById(id).textContent='—');
+  const delay=ms=>new Promise(r=>setTimeout(r,ms));
+
+  setStage(0);
+  appendLog(`[00:00.000] INFO  Initialising synthetic EBSD scan — ${n} grains, Hf=${hf} at%`,'log-info');
+  await delay(300);
+  appendLog(`[00:00.312] OK    Data ingested: ${n} orientations (φ₁, Φ, φ₂)`,'log-ok');
+
+  setStage(1); await delay(250);
+  appendLog(`[00:00.567] INFO  Running ETL: normalising Euler angles to [0°–360°, 0°–90°]`,'log-info');
+  await delay(200);
+  appendLog(`[00:00.774] OK    Outliers removed (>3σ): ${Math.floor(n*0.012)} grains flagged`,'log-ok');
+  appendLog(`[00:00.812] OK    Missing CI values imputed via KNN`,'log-ok');
+
+  setStage(2); await delay(280);
+  appendLog(`[00:01.092] INFO  Extracting features: ODF coefficients, misorientation angles, GOS`,'log-info');
+  await delay(220);
+  appendLog(`[00:01.318] OK    Feature matrix shape: [${n}, 7]`,'log-ok');
+
+  setStage(3);
+  const {grains}=genData(n,hf,k);
+  await delay(350);
+  appendLog(`[00:01.670] INFO  Running k-means (k=${k}, max_iter=300, n_init=10)`,'log-info');
+  await delay(300);
+  const sil=silhouette(grains,k);
+  appendLog(`[00:01.985] OK    Converged in ${12+Math.floor(Math.random()*8)} iterations`,'log-ok');
+  appendLog(`[00:01.998] OK    Silhouette score: ${sil}  ${sil>0.45?'(good separation)':'(moderate)'}`,'log-ok');
+
+  setStage(4); await delay(250);
+  const counts=Array(k).fill(0);
+  grains.forEach(g=>counts[g.cluster]++);
+  phaseNames.forEach((name,i)=>appendLog(`[00:02.251] OK    Cluster ${i} → ${name} (${counts[i]} grains, ${(counts[i]/n*100).toFixed(1)}%)`,'log-ok'));
+
+  setStage(5); await delay(200);
+  appendLog(`[00:02.501] INFO  Generating visualisations`,'log-info');
+
+  document.getElementById('m0').textContent=n.toLocaleString();
+  document.getElementById('m1').textContent=k;
+  document.getElementById('m2').textContent=sil;
+  document.getElementById('m3').textContent=(counts[1]/n*100).toFixed(1)+'%';
+
+  appendLog(`[00:02.740] OK    Pipeline complete — ${k} phases identified`,'log-ok');
+
+  ['scatterChart','barChart','histChart','lineChart'].forEach(id=>destroyChart(id));
+
+  const sample=grains.slice(0,Math.min(400,n));
+  charts.scatter=new Chart(document.getElementById('scatterChart'),{type:'scatter',data:{datasets:phaseNames.map((name,i)=>({label:name,data:sample.filter(g=>g.cluster===i).map(g=>({x:+g.phi1.toFixed(1),y:+g.phi.toFixed(1)})),backgroundColor:PHASE_COLORS[i]+'bb',pointRadius:3}))},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:'φ₁ (°)',color:'#718096'},min:0,max:360,ticks:{color:'#718096',font:{size:10}}},y:{title:{display:true,text:'Φ (°)',color:'#718096'},min:0,max:90,ticks:{color:'#718096',font:{size:10}}}}}});
+
+  charts.bar=new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:phaseNames,datasets:[{label:'Volume %',data:counts.map(c=>+(c/n*100).toFixed(1)),backgroundColor:PHASE_COLORS.slice(0,k)}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#718096',font:{size:10}}},y:{title:{display:true,text:'Volume %',color:'#718096'},ticks:{color:'#718096',font:{size:10}}}}}});
+
+  const r2=rng(99);
+  const misBins=Array.from({length:13},(_,i)=>i*5);
+  const misData=misBins.map((b,i)=>{const base=b<15?Math.floor(r2()*8+2):b<45?Math.floor(r2()*30+15):Math.floor(r2()*10+3);return i===8?base+40:base;});
+  charts.hist=new Chart(document.getElementById('histChart'),{type:'bar',data:{labels:misBins.map(b=>b+'°'),datasets:[{label:'Count',data:misData,backgroundColor:'#2b6cb0aa',borderColor:'#2b6cb0',borderWidth:0.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#718096',font:{size:10}},title:{display:true,text:'Misorientation angle',color:'#718096'}},y:{ticks:{color:'#718096',font:{size:10}}}}}});
+
+  const temps=[200,250,300,350,400,450,500,550,600,650,700];
+  const r3=rng(77);
+  const ti_vals=temps.map((t,i)=>+(1.2+i*0.08+(t>450?-0.6+((t-450)/50)*0.3:0)+r3()*0.05).toFixed(2));
+  charts.line=new Chart(document.getElementById('lineChart'),{type:'line',data:{labels:temps.map(t=>t+'°C'),datasets:[{label:'Texture index',data:ti_vals,borderColor:'#276749',backgroundColor:'#27674922',fill:true,tension:0.35,pointRadius:4,pointBackgroundColor:'#276749'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#718096',font:{size:10}}},y:{title:{display:true,text:'Texture index J',color:'#718096'},ticks:{color:'#718096',font:{size:10}}}}}});
+}
+
+document.getElementById('grainSlider').oninput=function(){document.getElementById('grainVal').textContent=this.value};
+document.getElementById('hfSlider').oninput=function(){document.getElementById('hfVal').textContent=this.value};
+document.getElementById('kSlider').oninput=function(){document.getElementById('kVal').textContent=this.value};
+</script>
+</body>
+</html>
